@@ -176,12 +176,19 @@ Your task:
 4. Search for current data, recent news, and analyst perspectives
 5. Build on previous findings, don't repeat what's already established
 
-After your research, provide a structured response:
-FINDINGS: [detailed analysis]
-EVIDENCE: [bullet list of specific data points found]
-CONFIDENCE: [0.0-1.0 — how confident are you in these findings given the evidence quality]
-APPROACH: [what research angle you used this iteration]
-REASONING: [why this confidence level — what would increase it further]"""
+After your research, provide a structured response using EXACTLY these section headers:
+
+FINDINGS: [detailed analysis with specific tickers, numbers, and data]
+EVIDENCE:
+- [specific data point 1 with source]
+- [specific data point 2 with source]
+APPROACH: [research angle used this iteration]
+REASONING: [what supports and what would challenge this analysis]
+CONFIDENCE_BREAKDOWN:
+EVIDENCE_QUALITY: [0-100 — how much is based on real data vs. pure reasoning]
+SOURCE_DIVERSITY: [0-100 — how many independent sources confirmed findings]
+CHALLENGE_RESOLVED: [0-100 — how well challenger feedback was addressed, 50 if no challenge yet]
+RISK_COVERAGE: [0-100 — whether key downside risks were identified and assessed]"""
 
         task = TaskContext(
             task_id=f"{self.agent_id}-research-{self.domain}",
@@ -196,17 +203,23 @@ REASONING: [why this confidence level — what would increase it further]"""
         return self._parse_research_output(raw)
 
     def _parse_research_output(self, raw: str) -> dict:
-        """Extract structured fields from the agent's response."""
         result = {
             "findings": raw,
             "evidence": [],
-            "confidence": 0.5,
             "approach": "general research",
             "reasoning": "",
+            "confidence_breakdown": {},
         }
 
         lines = raw.split("\n")
         current_section = None
+
+        def parse_score(text: str) -> int:
+            try:
+                val = float(text.strip().split()[0].rstrip(",.%"))
+                return max(0, min(100, int(val)))
+            except (ValueError, IndexError):
+                return 0
 
         for line in lines:
             stripped = line.strip()
@@ -217,19 +230,23 @@ REASONING: [why this confidence level — what would increase it further]"""
                 result["findings"] = stripped[9:].strip()
             elif upper.startswith("EVIDENCE:"):
                 current_section = "evidence"
-            elif upper.startswith("CONFIDENCE:"):
-                current_section = None
-                try:
-                    val = stripped[11:].strip().split()[0].rstrip(",.")
-                    result["confidence"] = max(0.0, min(1.0, float(val)))
-                except (ValueError, IndexError):
-                    pass
             elif upper.startswith("APPROACH:"):
                 current_section = "approach"
                 result["approach"] = stripped[9:].strip()
             elif upper.startswith("REASONING:"):
                 current_section = "reasoning"
                 result["reasoning"] = stripped[10:].strip()
+            elif upper.startswith("CONFIDENCE_BREAKDOWN:"):
+                current_section = "breakdown"
+            elif current_section == "breakdown":
+                if upper.startswith("EVIDENCE_QUALITY:"):
+                    result["confidence_breakdown"]["evidence_quality"] = parse_score(stripped[17:])
+                elif upper.startswith("SOURCE_DIVERSITY:"):
+                    result["confidence_breakdown"]["source_diversity"] = parse_score(stripped[17:])
+                elif upper.startswith("CHALLENGE_RESOLVED:"):
+                    result["confidence_breakdown"]["challenge_resolved"] = parse_score(stripped[19:])
+                elif upper.startswith("RISK_COVERAGE:"):
+                    result["confidence_breakdown"]["risk_coverage"] = parse_score(stripped[14:])
             elif current_section == "findings" and stripped:
                 result["findings"] += "\n" + stripped
             elif current_section == "evidence" and stripped.startswith(("-", "•", "*")):

@@ -246,12 +246,15 @@ class ProjectManager:
                 on_update(project.to_dict())
 
     def chat_with_agent(self, project_id: str, domain: str, user_message: str) -> str:
-        """
-        User talks directly to a specific domain agent for deeper dialogue.
-        """
+        """User talks directly to a specific domain agent for deeper dialogue."""
         project = self._get_or_raise(project_id)
-        findings = project.agent_states.get(domain, {}).get("current_findings", "No findings yet.")
+        agent_state = project.agent_states.get(domain, {})
+        findings = agent_state.get("current_findings", "No findings yet.")
+        confidence = agent_state.get("best_confidence", 0.0)
+        breakdown = agent_state.get("confidence_breakdown", {})
         scope = project.scope
+        brief = project.brief
+        clarifications = project.clarifications
 
         from ..movement.orchestrator import TaskContext, TaskComplexity
         from ..agents.domain import DOMAIN_CONFIGS
@@ -260,12 +263,33 @@ class ProjectManager:
 
         system = f"""{cfg['system']}
 
-You have completed research for this project. Here are your current findings:
+ORIGINAL RESEARCH BRIEF:
+{brief}
+
+RESEARCH SCOPE:
+Objective: {scope.get('objective', '')}
+Layers: {', '.join(scope.get('layers', []))}
+Time horizon: {scope.get('time_horizon', '7 years')}
+Success metric: {scope.get('success_metric', '5x return')}
+Constraints: {', '.join(scope.get('constraints', []))}
+Key questions: {json.dumps(scope.get('key_questions', []))}
+
+USER CLARIFICATIONS:
+{json.dumps(clarifications, indent=2)}
+
+YOUR COMPLETED RESEARCH FINDINGS (confidence: {confidence:.0%}):
 {findings}
 
-The user wants to discuss your findings, ask follow-up questions, or provide
-new information that may change your analysis. Be direct, specific, and honest
-about confidence levels and what would change your view."""
+CONFIDENCE BREAKDOWN:
+- Evidence Quality: {breakdown.get('evidence_quality', 0)}%
+- Source Diversity: {breakdown.get('source_diversity', 0)}%
+- Challenge Resolved: {breakdown.get('challenge_resolved', 0)}%
+- Risk Coverage: {breakdown.get('risk_coverage', 0)}%
+
+You are in a live conversation with the user about your research. Be direct, specific,
+and honest. Reference specific tickers, numbers, and data points from your findings.
+If the user provides new information that changes your analysis, say so explicitly.
+If asked what would change your view, give concrete thresholds, not vague hedges."""
 
         task = TaskContext(
             task_id=f"agent-chat-{domain}",

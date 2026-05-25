@@ -12,7 +12,6 @@ import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
 
 from ..movement.orchestrator import Movement, TaskComplexity, TaskContext
 from ..utils.logger import get_logger
@@ -30,14 +29,51 @@ class AgentStatus(str, Enum):
 
 
 @dataclass
+class ConfidenceBreakdown:
+    evidence_quality: float = 0.0       # concrete data points vs. pure reasoning
+    source_diversity: float = 0.0       # variety of independent sources used
+    challenge_resolved: float = 0.0     # how well challenger feedback was addressed
+    risk_coverage: float = 0.0          # whether key risks were identified and assessed
+    overall: float = 0.0                # weighted composite
+
+    def to_dict(self) -> dict:
+        return {
+            "evidence_quality": round(self.evidence_quality * 100),
+            "source_diversity": round(self.source_diversity * 100),
+            "challenge_resolved": round(self.challenge_resolved * 100),
+            "risk_coverage": round(self.risk_coverage * 100),
+            "overall": round(self.overall * 100),
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "ConfidenceBreakdown":
+        def pct(v):
+            if v is None:
+                return 0.0
+            return float(v) / 100 if float(v) > 1 else float(v)
+        return cls(
+            evidence_quality=pct(d.get("evidence_quality", 0)),
+            source_diversity=pct(d.get("source_diversity", 0)),
+            challenge_resolved=pct(d.get("challenge_resolved", 0)),
+            risk_coverage=pct(d.get("risk_coverage", 0)),
+            overall=pct(d.get("overall", 0)),
+        )
+
+    @staticmethod
+    def compute_overall(eq: float, sd: float, cr: float, rc: float) -> float:
+        return round(eq * 0.35 + sd * 0.20 + cr * 0.25 + rc * 0.20, 3)
+
+
+@dataclass
 class ResearchIteration:
     iteration: int
     hypothesis: str
     evidence: list[str]
-    confidence: float       # 0.0 – 1.0
-    approach: str
-    kept: bool
-    reasoning: str
+    confidence: float
+    confidence_breakdown: ConfidenceBreakdown = field(default_factory=ConfidenceBreakdown)
+    approach: str = ""
+    kept: bool = False
+    reasoning: str = ""
 
 
 @dataclass
@@ -48,6 +84,7 @@ class AgentState:
     status: AgentStatus = AgentStatus.IDLE
     iterations: list[ResearchIteration] = field(default_factory=list)
     best_confidence: float = 0.0
+    best_confidence_breakdown: ConfidenceBreakdown = field(default_factory=ConfidenceBreakdown)
     current_findings: str = ""
     challenger_feedback: str = ""
     created_at: float = field(default_factory=time.time)
@@ -60,6 +97,7 @@ class AgentState:
             "project_id": self.project_id,
             "status": self.status.value,
             "best_confidence": self.best_confidence,
+            "confidence_breakdown": self.best_confidence_breakdown.to_dict(),
             "current_findings": self.current_findings,
             "iterations_count": len(self.iterations),
             "created_at": self.created_at,
@@ -68,12 +106,6 @@ class AgentState:
 
 
 class BaseAgent(ABC):
-    """
-    Abstract base for all AutoMiro agents.
-    Subclasses implement `research_step` — the core domain logic.
-    The AutoResearch loop runs here.
-    """
-
     def __init__(self, domain: str, project_id: str, movement: Movement):
         self.agent_id = str(uuid.uuid4())[:8]
         self.domain = domain
@@ -90,7 +122,7 @@ class BaseAgent(ABC):
     def research_step(self, scope: dict, hypothesis: str, previous_findings: str) -> dict:
         """
         One iteration of domain research.
-        Returns: {evidence: [...], confidence: float, findings: str, approach: str}
+        Returns: {evidence, confidence_breakdown: dict, findings, approach, reasoning}
         """
 
     @abstractmethod
@@ -98,9 +130,6 @@ class BaseAgent(ABC):
         """Produce the first hypothesis given the brief scope."""
 
     def run(self, scope: dict) -> AgentState:
-        """
-        AutoResearch loop. Runs until confidence plateaus or iteration limit hit.
-        """
         self.state.status = AgentStatus.RESEARCHING
         logger.info(f"[{self.domain}:{self.agent_id}] Starting research loop")
 
@@ -114,7 +143,20 @@ class BaseAgent(ABC):
 
             result = self.research_step(scope, hypothesis, best_findings)
 
-            confidence = result.get("confidence", 0.0)
+            breakdown_raw = result.get("confidence_breakdown", {})
+            breakdown = ConfidenceBreakdown.from_dict(breakdown_raw) if breakdown_raw else ConfidenceBreakdown()
+
+            # Compute overall from components so it's always earned, never defaulted
+            if breakdown.overall == 0.0 and any([
+                breakdown.evidence_quality, breakdown.source_diversity,
+                breakdown.challenge_resolved, breakdown.risk_coverage
+            ]):
+                breakdown.overall = ConfidenceBreakdown.compute_overall(
+                    breakdown.evidence_quality, breakdown.source_diversity,
+                    breakdown.challenge_resolved, breakdown.risk_coverage,
+                )
+
+            confidence = breakdown.overall or result.get("confidence", 0.0)
             findings = result.get("findings", "")
             approach = result.get("approach", "")
             evidence = result.get("evidence", [])
@@ -125,6 +167,7 @@ class BaseAgent(ABC):
                 hypothesis=hypothesis,
                 evidence=evidence,
                 confidence=confidence,
+                confidence_breakdown=breakdown,
                 approach=approach,
                 kept=kept,
                 reasoning=result.get("reasoning", ""),
@@ -135,31 +178,28 @@ class BaseAgent(ABC):
                 best_confidence = confidence
                 best_findings = findings
                 self.state.best_confidence = best_confidence
+                self.state.best_confidence_breakdown = breakdown
                 self.state.current_findings = best_findings
                 logger.info(f"[{self.domain}:{self.agent_id}] ✓ Kept — confidence {confidence:.2f}")
             else:
                 logger.info(f"[{self.domain}:{self.agent_id}] ✗ Discarded — confidence {confidence:.2f} ≤ {best_confidence:.2f}")
 
-            # Form next hypothesis from challenger feedback + current findings
             hypothesis = self._evolve_hypothesis(scope, best_findings, self.state.challenger_feedback)
 
-            # Early exit if confidence is very high
             if best_confidence >= 0.88:
                 logger.info(f"[{self.domain}:{self.agent_id}] High confidence reached, stopping early")
                 break
 
         self.state.status = AgentStatus.COMPLETE
         self.state.updated_at = time.time()
-        logger.info(f"[{self.domain}:{self.agent_id}] Complete — final confidence {self.state.best_confidence:.2f}")
+        logger.info(f"[{self.domain}:{self.agent_id}] Complete — overall confidence {self.state.best_confidence:.2f}")
         return self.state
 
     def receive_challenge(self, feedback: str):
-        """Challenger agent injects feedback into this agent's next iteration."""
         self.state.challenger_feedback = feedback
         self.state.status = AgentStatus.CHALLENGED
 
     def _evolve_hypothesis(self, scope: dict, current_findings: str, challenger_feedback: str) -> str:
-        """Use the mid model to evolve the hypothesis based on findings + challenge."""
         if not current_findings:
             return self.form_initial_hypothesis(scope)
 
