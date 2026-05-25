@@ -69,19 +69,17 @@ Convergences:
             return ""
         try:
             session_id = f"automiro-{project_id}"
-            result = self._zep.memory.search(
-                session_id=session_id,
-                text=query,
-                limit=5,
-            )
-            if not result or not hasattr(result, "results"):
-                return ""
-
-            parts = []
-            for r in result.results:
-                if hasattr(r, "message") and r.message:
-                    parts.append(r.message.content)
-            return "\n\n".join(parts)
+            # Try v2 API first, fall back to v3 graph API
+            if hasattr(self._zep, "memory") and hasattr(self._zep.memory, "search"):
+                result = self._zep.memory.search(session_id=session_id, text=query, limit=5)
+                if not result or not hasattr(result, "results"):
+                    return ""
+                parts = []
+                for r in result.results:
+                    if hasattr(r, "message") and r.message:
+                        parts.append(r.message.content)
+                return "\n\n".join(parts)
+            return ""
         except Exception as e:
             logger.warning(f"[Memory] Retrieval failed: {e}")
             return ""

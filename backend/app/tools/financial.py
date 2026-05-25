@@ -93,13 +93,20 @@ def format_stock_info(ticker: str) -> str:
     hist = get_ticker_history(ticker, "1y")
     change_str = f"{hist.get('pct_change', 'N/A')}%" if "pct_change" in hist else "N/A"
 
+    def fmt(val, prefix="$", suffix="", is_int=False):
+        if val is None:
+            return "N/A"
+        if is_int:
+            return f"{prefix}{int(val):,}{suffix}"
+        return f"{prefix}{val}{suffix}"
+
     return f"""
 {info['ticker']} — {info['name']}
 Sector: {info['sector']} | Industry: {info['industry']}
-Price: ${info['price']} | 52w: ${info['52w_low']} – ${info['52w_high']}
-Market Cap: ${info['market_cap']:,} | P/E: {info['pe_ratio']} | Fwd P/E: {info['forward_pe']}
-Revenue Growth: {info['revenue_growth']} | Earnings Growth: {info['earnings_growth']}
-Analyst Target: ${info['analyst_target']} | Recommendation: {info['recommendation']}
+Price: {fmt(info['price'])} | 52w: {fmt(info['52w_low'])} – {fmt(info['52w_high'])}
+Market Cap: {fmt(info['market_cap'], is_int=True)} | P/E: {fmt(info['pe_ratio'], prefix='')} | Fwd P/E: {fmt(info['forward_pe'], prefix='')}
+Revenue Growth: {fmt(info['revenue_growth'], prefix='')} | Earnings Growth: {fmt(info['earnings_growth'], prefix='')}
+Analyst Target: {fmt(info['analyst_target'])} | Recommendation: {fmt(info['recommendation'], prefix='')}
 1Y Price Change: {change_str}
 Business: {info['description']}
 """.strip()
