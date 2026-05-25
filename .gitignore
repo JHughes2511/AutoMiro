@@ -1,0 +1,23 @@
+# Environment — never commit secrets
+.env
+
+# Data directories
+data/
+backend/data/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# OS
+.DS_Store
+Thumbs.db
