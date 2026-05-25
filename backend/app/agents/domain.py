@@ -196,7 +196,7 @@ RISK_COVERAGE: [0-100 — whether key downside risks were identified and assesse
             system_prompt=self.system_prompt,
             messages=[{"role": "user", "content": user_message}],
             tools=AGENT_TOOLS,
-            max_tokens=4096,
+            max_tokens=8000,
         )
 
         raw = self.movement.run_with_tools(task, _execute_tool)

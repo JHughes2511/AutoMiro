@@ -296,7 +296,7 @@ If asked what would change your view, give concrete thresholds, not vague hedges
             complexity=TaskComplexity.MID,
             system_prompt=system,
             messages=[{"role": "user", "content": user_message}],
-            max_tokens=2048,
+            max_tokens=4096,
         )
         return self.movement.run_task(task)
 
